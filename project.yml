@@ -55,6 +55,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/App/r2-git2.entitlements
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_APP_SANDBOX: NO         # Sparkle + Keychain simplest without sandbox (not App Store).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   R2Git2Tests:
     type: bundle.unit-test
