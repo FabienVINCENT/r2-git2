@@ -1,0 +1,87 @@
+name: r2-git2
+options:
+  bundleIdPrefix: fr.fabien-vincent
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  xcodeVersion: "16.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    # Ad-hoc sign for local/CI builds (no Developer ID yet — see README "Distribution").
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_HARDENED_RUNTIME: YES
+
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+
+targets:
+  r2-git2:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+        excludes:
+          - "**/*.md"
+    resources: []
+    dependencies:
+      - package: Sparkle
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        CFBundleName: r2-git2
+        CFBundleDisplayName: r2-git2
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSUIElement: true            # Menu-bar-only app: no Dock icon, no main window.
+        LSMinimumSystemVersion: "15.0"
+        NSHumanReadableCopyright: "© 2026 Fabien Vincent. MIT License."
+        # --- Sparkle auto-update configuration ---
+        SUFeedURL: "https://github.com/FabienVINCENT/r2-git2/releases/latest/download/appcast.xml"
+        # Replace with the public EdDSA key printed by `generate_keys` (see README).
+        SUPublicEDKey: "REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY"
+        SUEnableInstallerLauncherService: true
+        SUAutomaticallyUpdate: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fr.fabien-vincent.r2-git2
+        CODE_SIGN_ENTITLEMENTS: Sources/App/r2-git2.entitlements
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_APP_SANDBOX: NO         # Sparkle + Keychain simplest without sandbox (not App Store).
+
+  R2Git2Tests:
+    type: bundle.unit-test
+    platform: macOS
+    # Logic tests: compile the pure-Foundation sources under test directly into the test module
+    # (no GUI host app required, so `xcodebuild test` runs cleanly headless in CI).
+    sources:
+      - path: Tests
+      - path: Sources/Networking/ETagCache.swift
+      - path: Sources/Models/GitHubModels.swift
+      - path: Sources/Models/DomainModels.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fr.fabien-vincent.r2-git2.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  r2-git2:
+    build:
+      targets:
+        r2-git2: all
+        R2Git2Tests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - R2Git2Tests
+    archive:
+      config: Release

@@ -1,0 +1,133 @@
+name: Release
+
+# Trigger: push a version tag, e.g. `git tag v1.2.0 && git push origin v1.2.0`.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed to create the GitHub Release
+
+env:
+  SPARKLE_VERSION: "2.6.4"   # version of the Sparkle CLI tools (sign_update) to download
+
+jobs:
+  release:
+    name: Build, sign & publish
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"                 # e.g. v1.2.0
+          VERSION="${TAG#v}"                       # -> 1.2.0
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"   >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Install tooling
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build Release .app
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project r2-git2.xcodeproj \
+            -scheme r2-git2 \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
+            CODE_SIGNING_ALLOWED=NO
+          # NOTE (Apple notarization TODO): to ship a Developer ID build, replace the two lines
+          # above with a real signing identity, then add `codesign --options runtime` +
+          # `xcrun notarytool submit ... --wait` + `xcrun stapler staple` steps here.
+
+      - name: Package .dmg (headless, no GUI needed)
+        id: dmg
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release/r2-git2.app"
+          STAGING="dmg-staging"
+          DMG="r2-git2-${{ steps.version.outputs.version }}.dmg"
+          rm -rf "$STAGING" && mkdir -p "$STAGING"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"      # drag-to-install target
+          hdiutil create -volname "r2-git2" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Sparkle signing tool
+        run: |
+          set -euo pipefail
+          curl -fsSL -o sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p sparkle && tar -xf sparkle.tar.xz -C sparkle
+
+      - name: Sign the .dmg with the EdDSA key
+        id: sign
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPARKLE_PRIVATE_KEY:-}" ]; then
+            echo "::error::Secret SPARKLE_PRIVATE_KEY is not set. See README → Distribution."
+            exit 1
+          fi
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > sparkle_private_key
+          # sign_update prints: sparkle:edSignature="..." length="12345"
+          SIG_LINE="$(./sparkle/bin/sign_update "${{ steps.dmg.outputs.dmg }}" -f sparkle_private_key)"
+          rm -f sparkle_private_key
+          echo "Signature line: $SIG_LINE"
+          ED_SIG="$(echo "$SIG_LINE" | sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/')"
+          LENGTH="$(echo "$SIG_LINE" | sed -E 's/.*length="([0-9]+)".*/\1/')"
+          echo "edSignature=$ED_SIG" >> "$GITHUB_OUTPUT"
+          echo "length=$LENGTH"      >> "$GITHUB_OUTPUT"
+
+      - name: Generate appcast.xml
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.dmg }}"
+          URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/${DMG}"
+          PUBDATE="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+          cat > appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <channel>
+              <title>r2-git2</title>
+              <link>${{ github.server_url }}/${{ github.repository }}</link>
+              <description>Automatic updates for r2-git2</description>
+              <language>en</language>
+              <item>
+                <title>Version ${{ steps.version.outputs.version }}</title>
+                <pubDate>${PUBDATE}</pubDate>
+                <sparkle:version>${{ steps.version.outputs.build }}</sparkle:version>
+                <sparkle:shortVersionString>${{ steps.version.outputs.version }}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+                <enclosure url="${URL}"
+                           sparkle:edSignature="${{ steps.sign.outputs.edSignature }}"
+                           length="${{ steps.sign.outputs.length }}"
+                           type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          EOF
+          cat appcast.xml
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: r2-git2 ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.dmg.outputs.dmg }}
+            appcast.xml

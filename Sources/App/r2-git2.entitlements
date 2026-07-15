@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  App Sandbox is OFF (see project.yml: ENABLE_APP_SANDBOX=NO). This keeps Sparkle updates
+  and Keychain access simple while we ship outside the App Store.
+
+  When you later adopt a Developer ID + notarization, you can enable the sandbox and add:
+    com.apple.security.app-sandbox                = true
+    com.apple.security.network.client             = true
+  plus Sparkle's sandboxing entitlements (see Sparkle docs). Until then this file is
+  intentionally minimal; Hardened Runtime is enabled via build settings for future notarization.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
