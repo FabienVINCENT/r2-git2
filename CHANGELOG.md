@@ -6,6 +6,8 @@ also shown in-app by Sparkle when an update is offered. Format loosely follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-16
+
 ### Added
 - Group followed-repo PRs by repository, under a subheader per repo.
 - `CHANGELOG.md`; release notes are now embedded in the Sparkle appcast and the GitHub Release.
