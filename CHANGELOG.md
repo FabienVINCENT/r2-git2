@@ -6,6 +6,14 @@ also shown in-app by Sparkle when an update is offered. Format loosely follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-16
+
+### Fixed
+- Popover no longer shows an empty gap above its content (removed `ignoresSafeArea` on the
+  translucent background, which extended it into the top safe area).
+- Settings window now activates and is brought to the front. As an accessory (menu-bar) app it
+  could otherwise slip behind other apps' windows and never return.
+
 ## [1.1.0] - 2026-07-16
 
 ### Added

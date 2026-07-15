@@ -1,9 +1,11 @@
 import SwiftUI
+import AppKit
 
 /// Root of the menu-bar popover. Routes between the login screen and the data dashboard.
 struct PopoverView: View {
     @Bindable var store: AppStore
     @ObservedObject var updater: UpdaterViewModel
+    @Environment(\.openSettings) private var openSettings
 
     /// Measured height of the scrollable content, so the popover is exactly as tall as needed
     /// (and only scrolls once it would exceed `popoverMaxHeight`).
@@ -23,7 +25,7 @@ struct PopoverView: View {
             }
         }
         .frame(width: Theme.popoverWidth)
-        .background(VisualEffectBackground().ignoresSafeArea())
+        .background(VisualEffectBackground())
         .task { if store.authPhase == .checking { await store.bootstrap() } }
     }
 
@@ -136,6 +138,23 @@ struct PopoverView: View {
         return result.filter {
             $0.title.localizedCaseInsensitiveContains(query)
             || $0.repositoryFullName.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    /// Opens Settings and forces it frontmost. Needed because this is an accessory (menu-bar)
+    /// app: without activating, the Settings window can slip behind other apps' windows and never
+    /// come back.
+    private func openSettingsWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let win = NSApp.windows.first { w in
+                (w.identifier?.rawValue.localizedCaseInsensitiveContains("settings") ?? false)
+                || w.title.localizedCaseInsensitiveContains("settings")
+                || w.title.localizedCaseInsensitiveContains("réglages")
+            }
+            win?.makeKeyAndOrderFront(nil)
+            win?.orderFrontRegardless()
         }
     }
 
@@ -331,7 +350,9 @@ struct PopoverView: View {
                 Text("@\(user.login)").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
             }
             Spacer()
-            SettingsLink {
+            Button {
+                openSettingsWindow()
+            } label: {
                 Image(systemName: "gearshape").font(.system(size: 12))
             }
             .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).help("Settings")
