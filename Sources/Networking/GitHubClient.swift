@@ -44,6 +44,10 @@ actor GitHubClient {
 
         var req = URLRequest(url: url)
         req.httpMethod = method
+        // Bypass URLSession's own HTTP cache: GitHub sends `Cache-Control: max-age=60` on some
+        // endpoints (notably /notifications), which would replay a stale list for ~60s and make
+        // just-handled items reappear. We do our own conditional caching via ETag below.
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue(accept, forHTTPHeaderField: "Accept")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue(Config.userAgent, forHTTPHeaderField: "User-Agent")
@@ -157,15 +161,20 @@ actor GitHubClient {
     }
 
     /// Unread notifications (includes mentions).
+    ///
+    /// Not ETag-cached on purpose: the notifications endpoint frequently answers 304 ("nothing
+    /// *new*"), which would replay a stale cached body — so items just marked done would reappear
+    /// on the next refresh. We always fetch it fresh.
     func notifications() async throws -> [GitHubNotification] {
-        try await get("notifications", query: [URLQueryItem(name: "all", value: "false")])
+        try await get("notifications", query: [URLQueryItem(name: "all", value: "false")], cache: false)
     }
 
-    /// Marks a notification thread as read (the "mark as done" action). Requires `notifications`
-    /// scope. Returns 205 on success.
-    func markNotificationRead(id: String) async throws {
+    /// Marks a notification thread as **done** — this removes it from the GitHub inbox (unlike a
+    /// PATCH, which only marks it read and leaves it visible). Requires `notifications` scope;
+    /// returns 204.
+    func markNotificationDone(id: String) async throws {
         let url = GitHubEndpoint.rest("notifications/threads/\(id)")
-        _ = try await send(method: "PATCH", url: url, accept: "application/vnd.github+json")
+        _ = try await send(method: "DELETE", url: url, accept: "application/vnd.github+json")
     }
 
     /// Authoritative rate-limit snapshot. This endpoint does **not** consume quota.

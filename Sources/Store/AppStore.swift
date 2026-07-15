@@ -89,11 +89,11 @@ final class AppStore {
         recentFailures.removeAll { $0.id == run.id }
     }
 
-    /// "Mark as done" a notification: marks it read on GitHub and drops it from the list.
+    /// "Mark as done" a notification: removes it from the GitHub inbox and drops it from the list.
     func markNotificationDone(_ item: NotificationItem) async {
         mentions.removeAll { $0.id == item.id }   // optimistic — feels instant
         do {
-            try await client.markNotificationRead(id: item.id)
+            try await client.markNotificationDone(id: item.id)
         } catch {
             if !handleAuthError(error) {
                 lastError = (error as? APIError)?.localizedDescription ?? error.localizedDescription
@@ -255,22 +255,21 @@ final class AppStore {
         var running: [RunItem] = []
         var failures: [RunItem] = []
 
-        await withTaskGroup(of: RepoData?.self) { group in
+        await withTaskGroup(of: RepoData.self) { group in
             for repo in repos {
                 group.addTask { [client] in
-                    do {
-                        async let prs = client.openPullRequests(owner: repo.ownerLogin, repo: repo.name)
-                        async let runs = client.workflowRuns(owner: repo.ownerLogin, repo: repo.name)
-                        let mappedRuns = try await runs.map { Self.mapRun($0, repoFullName: repo.fullName) }
-                        return RepoData(prs: try await prs, runs: mappedRuns)
-                    } catch {
-                        Self.log.error("Repo \(repo.fullName, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-                        return nil
-                    }
+                    // PRs and runs are fetched independently: a failure in one must not drop the
+                    // other (e.g. a runs decode error should never hide a repo's PRs).
+                    var prs: [PRItem] = []
+                    var runs: [RunItem] = []
+                    do { prs = try await client.openPullRequests(owner: repo.ownerLogin, repo: repo.name) }
+                    catch { Self.log.error("PRs \(repo.fullName, privacy: .public) failed: \(error.localizedDescription, privacy: .public)") }
+                    do { runs = try await client.workflowRuns(owner: repo.ownerLogin, repo: repo.name).map { Self.mapRun($0, repoFullName: repo.fullName) } }
+                    catch { Self.log.error("Runs \(repo.fullName, privacy: .public) failed: \(error.localizedDescription, privacy: .public)") }
+                    return RepoData(prs: prs, runs: runs)
                 }
             }
             for await data in group {
-                guard let data else { continue }
                 openPRs.append(contentsOf: data.prs)
                 for item in data.runs {
                     if isDismissed(item) { continue }         // user marked it handled

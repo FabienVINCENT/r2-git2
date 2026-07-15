@@ -97,6 +97,16 @@ struct NotificationItem: Identifiable, Sendable, Hashable {
 
     var isMention: Bool { reason == "mention" || reason == "team_mention" }
 
+    /// Heuristic: dependency-bot notifications (dependabot/renovate) recognized from the subject
+    /// title, since the notifications payload carries no author. Used by the "hide bots" toggle.
+    var isBot: Bool {
+        let t = title.lowercased()
+        return t.hasPrefix("bump ")
+            || t.contains("build(deps")
+            || t.contains("chore(deps")
+            || t.hasPrefix("update dependency ")
+    }
+
     static func == (l: NotificationItem, r: NotificationItem) -> Bool { l.id == r.id }
     func hash(into h: inout Hasher) { h.combine(id) }
 }

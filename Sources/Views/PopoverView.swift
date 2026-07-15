@@ -101,7 +101,7 @@ struct PopoverView: View {
                     .foregroundStyle(hideBots ? Theme.accent : Theme.textTertiary)
             }
             .buttonStyle(.plain)
-            .help(hideBots ? "Show bot PRs (dependabot, …)" : "Hide bot PRs (dependabot, …)")
+            .help(hideBots ? "Show bot items (dependabot, …)" : "Hide bot PRs & notifications (dependabot, …)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
@@ -130,8 +130,10 @@ struct PopoverView: View {
     }
 
     private func filterNotifs(_ items: [NotificationItem]) -> [NotificationItem] {
-        guard !query.isEmpty else { return items }
-        return items.filter {
+        var result = items
+        if hideBots { result = result.filter { !$0.isBot } }
+        guard !query.isEmpty else { return result }
+        return result.filter {
             $0.title.localizedCaseInsensitiveContains(query)
             || $0.repositoryFullName.localizedCaseInsensitiveContains(query)
         }
@@ -259,7 +261,7 @@ struct PopoverView: View {
                                   color: item.isMention ? Theme.failure : Theme.neutral)],
                 url: item.url,
                 onDismiss: { Task { await store.markNotificationDone(item) } },
-                dismissHelp: "Mark as read on GitHub")
+                dismissHelp: "Mark as done (remove from GitHub inbox)")
     }
 
     private func roleColor(_ role: PRRole) -> Color {

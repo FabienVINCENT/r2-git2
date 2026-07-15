@@ -10,6 +10,16 @@ also shown in-app by Sparkle when an update is offered. Format loosely follows
 - Group followed-repo PRs by repository, under a subheader per repo.
 - `CHANGELOG.md`; release notes are now embedded in the Sparkle appcast and the GitHub Release.
 
+### Fixed
+- Notifications: "mark as done" now uses `DELETE /notifications/threads/{id}` (removes it from
+  the GitHub inbox) instead of `PATCH` (which only marked it read, so it stayed visible on GitHub).
+- Requests now bypass URLSession's HTTP cache (`reloadIgnoringLocalCacheData`): GitHub sends
+  `Cache-Control: max-age=60` on `/notifications`, so the OS replayed a stale list for ~60s and
+  made just-handled notifications reappear on refresh. Conditional caching is still done via ETag.
+- "Hide bots" (👥) now also hides dependabot/renovate notifications, not just bot PRs.
+- Followed repos: PRs and Actions runs are now fetched independently per repo, so a failure
+  fetching one no longer drops the other (a repo's PRs could disappear if its runs call failed).
+
 ## [1.0.0] - 2026-07-15
 
 ### Added
