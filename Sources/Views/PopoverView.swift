@@ -173,10 +173,16 @@ struct PopoverView: View {
                 })))
         }
         if !followed.isEmpty {
+            // Preserve the global bot-last / recency order within each repo group.
+            let grouped = Dictionary(grouping: followed, by: { $0.repositoryFullName })
+            let repoOrder = grouped.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
             specs.append(.init(id: "followed", view: AnyView(
                 CollapsibleSection(title: "Open PRs (followed)", systemImage: "arrow.triangle.pull",
                                    count: followed.count, accent: Theme.accent) {
-                    ForEach(followed) { prRow($0, showAuthor: true) }
+                    ForEach(repoOrder, id: \.self) { repo in
+                        repoSubheader(repo, count: grouped[repo]!.count)
+                        ForEach(grouped[repo]!) { prRow($0, showAuthor: true, showRepo: false) }
+                    }
                 })))
         }
         if !notifs.isEmpty {
@@ -207,15 +213,32 @@ struct PopoverView: View {
 
     // MARK: - Row builders
 
-    private func prRow(_ pr: PRItem, showAuthor: Bool) -> some View {
+    private func prRow(_ pr: PRItem, showAuthor: Bool, showRepo: Bool = true) -> some View {
         var badges: [RowBadge] = pr.roles.sorted { $0.rawValue < $1.rawValue }.map {
             RowBadge(text: $0.shortLabel, color: roleColor($0))
         }
         if pr.isDraft { badges.append(RowBadge(text: "draft", color: Theme.neutral)) }
-        var meta = pr.repositoryFullName + " · " + relativeTime(pr.updatedAt)
-        if showAuthor, let author = pr.authorLogin { meta = "@\(author) · " + meta }
+        var parts: [String] = []
+        if showAuthor, let author = pr.authorLogin { parts.append("@\(author)") }
+        if showRepo { parts.append(pr.repositoryFullName) }
+        parts.append(relativeTime(pr.updatedAt))
         return ItemRow(symbol: pr.ci.symbol, symbolColor: pr.ci.color,
-                       title: "#\(pr.number) \(pr.title)", subtitle: meta, badges: badges, url: pr.url)
+                       title: "#\(pr.number) \(pr.title)", subtitle: parts.joined(separator: " · "),
+                       badges: badges, url: pr.url)
+    }
+
+    /// Lightweight subheader used to group followed PRs by repository.
+    private func repoSubheader(_ name: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "folder.fill").font(.system(size: 9)).foregroundStyle(Theme.textTertiary)
+            Text(name).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            Text("\(count)").font(.system(size: 9, weight: .bold))
+                .padding(.horizontal, 4).padding(.vertical, 0.5)
+                .background(Theme.neutral.opacity(0.18), in: Capsule())
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 2)
     }
 
     private func runRow(_ run: RunItem, showDuration: Bool) -> some View {

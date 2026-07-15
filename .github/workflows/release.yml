@@ -91,12 +91,39 @@ jobs:
           echo "edSignature=$ED_SIG" >> "$GITHUB_OUTPUT"
           echo "length=$LENGTH"      >> "$GITHUB_OUTPUT"
 
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          # Print the body of a "## [<header>]" section until the next "## " heading.
+          notes_for() {
+            awk -v prefix="## [$1]" '
+              index($0, prefix) == 1 { flag = 1; next }
+              /^## / { if (flag) exit }
+              flag { print }
+            ' CHANGELOG.md
+          }
+          NOTES="$(notes_for "$VERSION")"
+          [ -n "$(printf %s "$NOTES" | tr -d '[:space:]')" ] || NOTES="$(notes_for "Unreleased")"
+          [ -n "$(printf %s "$NOTES" | tr -d '[:space:]')" ] || NOTES="Release $VERSION"
+          printf '%s\n' "$NOTES" > release_notes.md
+          # Minimal Markdown → HTML for the Sparkle appcast (bullets, subheads).
+          printf '%s\n' "$NOTES" | awk '
+            /^### / { if (l){print "</ul>"; l=0} s=$0; sub(/^### /,"",s); print "<b>" s "</b>"; next }
+            /^- /   { if (!l){print "<ul>"; l=1} s=$0; sub(/^- /,"",s); print "<li>" s "</li>"; next }
+            /^[[:space:]]*$/ { next }
+            { if (l){print "</ul>"; l=0} print "<p>" $0 "</p>" }
+            END { if (l) print "</ul>" }
+          ' > release_notes.html
+          echo "----- notes -----"; cat release_notes.md
+
       - name: Generate appcast.xml
         run: |
           set -euo pipefail
           DMG="${{ steps.dmg.outputs.dmg }}"
           URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/${DMG}"
           PUBDATE="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+          DESC_HTML="$(cat release_notes.html)"
           cat > appcast.xml <<EOF
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -111,6 +138,9 @@ jobs:
                 <sparkle:version>${{ steps.version.outputs.build }}</sparkle:version>
                 <sparkle:shortVersionString>${{ steps.version.outputs.version }}</sparkle:shortVersionString>
                 <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+                <description><![CDATA[
+          ${DESC_HTML}
+          ]]></description>
                 <enclosure url="${URL}"
                            sparkle:edSignature="${{ steps.sign.outputs.edSignature }}"
                            length="${{ steps.sign.outputs.length }}"
@@ -126,6 +156,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: r2-git2 ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
           draft: false
           prerelease: false
           files: |
