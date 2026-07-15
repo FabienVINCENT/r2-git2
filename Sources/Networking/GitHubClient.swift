@@ -69,7 +69,7 @@ actor GitHubClient {
         updateRateLimit(from: http)
 
         switch http.statusCode {
-        case 200, 201:
+        case 200...299:      // includes 205 Reset Content (returned when marking notifications read)
             if let cacheKey {
                 let etag = http.value(forHTTPHeaderField: "ETag")
                 await cache.update(key: cacheKey, etag: etag, data: data)
@@ -159,6 +159,13 @@ actor GitHubClient {
     /// Unread notifications (includes mentions).
     func notifications() async throws -> [GitHubNotification] {
         try await get("notifications", query: [URLQueryItem(name: "all", value: "false")])
+    }
+
+    /// Marks a notification thread as read (the "mark as done" action). Requires `notifications`
+    /// scope. Returns 205 on success.
+    func markNotificationRead(id: String) async throws {
+        let url = GitHubEndpoint.rest("notifications/threads/\(id)")
+        _ = try await send(method: "PATCH", url: url, accept: "application/vnd.github+json")
     }
 
     /// Authoritative rate-limit snapshot. This endpoint does **not** consume quota.

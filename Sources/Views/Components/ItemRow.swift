@@ -16,6 +16,9 @@ struct ItemRow: View {
     let subtitle: String
     var badges: [RowBadge] = []
     let url: URL
+    /// When set, a "mark handled" button appears on hover that calls this instead of opening.
+    var onDismiss: (() -> Void)? = nil
+    var dismissHelp: String = "Mark as handled (hide)"
 
     @State private var hovering = false
 
@@ -59,6 +62,18 @@ struct ItemRow: View {
                 }
 
                 Spacer(minLength: 4)
+
+                if let onDismiss {
+                    Button(action: onDismiss) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(dismissHelp)
+                    .opacity(hovering ? 1 : 0)
+                    .padding(.top, 1)
+                }
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))

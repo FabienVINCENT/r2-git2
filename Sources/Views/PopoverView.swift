@@ -5,19 +5,25 @@ struct PopoverView: View {
     @Bindable var store: AppStore
     @ObservedObject var updater: UpdaterViewModel
 
+    /// Measured height of the scrollable content, so the popover is exactly as tall as needed
+    /// (and only scrolls once it would exceed `popoverMaxHeight`).
+    @State private var contentHeight: CGFloat = 320
+    @State private var filterText = ""
+    @State private var hideBots = false
+
     var body: some View {
         Group {
             switch store.authPhase {
             case .checking:
                 loading
-            case .signedOut, .awaitingAuthorization:
+            case .signedOut:
                 LoginView(store: store)
             case .signedIn:
                 dashboard
             }
         }
         .frame(width: Theme.popoverWidth)
-        .background(Theme.background)
+        .background(VisualEffectBackground().ignoresSafeArea())
         .task { if store.authPhase == .checking { await store.bootstrap() } }
     }
 
@@ -37,6 +43,8 @@ struct PopoverView: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(Theme.separator)
+            filterBar
+            Divider().overlay(Theme.separator)
 
             if let error = store.lastError {
                 errorBanner(error)
@@ -44,25 +52,198 @@ struct PopoverView: View {
 
             ScrollView {
                 VStack(spacing: 0) {
-                    PullRequestSection(
-                        concerning: store.concerningPRs,
-                        followedOpen: store.followedOpenPRs,
-                        hasFollowedRepos: !store.followedRepos.isEmpty
-                    )
-                    Divider().overlay(Theme.separator)
-                    ActionsSection(
-                        running: store.runningRuns,
-                        recent: store.recentRuns,
-                        hasFollowedRepos: !store.followedRepos.isEmpty
-                    )
-                    Divider().overlay(Theme.separator)
-                    NotificationsSection(items: store.mentions)
+                    let visible = visibleSections            // empty sections are omitted entirely
+                    if visible.isEmpty {
+                        emptyState
+                    } else {
+                        ForEach(visible.indices, id: \.self) { i in
+                            if i > 0 { Divider().overlay(Theme.separator) }
+                            visible[i].view
+                        }
+                    }
                 }
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+                })
             }
-            .frame(maxHeight: Theme.popoverMaxHeight)
+            // As tall as the content, capped so a long list scrolls instead of overflowing screen.
+            .frame(height: min(contentHeight, Theme.popoverMaxHeight))
+            .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
 
             Divider().overlay(Theme.separator)
             footer
+        }
+    }
+
+    // MARK: - Filter
+
+    private var filterBar: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.textTertiary)
+            TextField("Filter by title, repo, branch…", text: $filterText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textPrimary)
+            if !filterText.isEmpty {
+                Button { filterText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button { hideBots.toggle() } label: {
+                Image(systemName: hideBots ? "person.fill.xmark" : "person.2")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(hideBots ? Theme.accent : Theme.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .help(hideBots ? "Show bot PRs (dependabot, …)" : "Hide bot PRs (dependabot, …)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+    }
+
+    private var query: String { filterText.trimmingCharacters(in: .whitespaces) }
+
+    private func filterPRs(_ prs: [PRItem]) -> [PRItem] {
+        var result = prs
+        if hideBots { result = result.filter { !$0.isBot } }
+        guard !query.isEmpty else { return result }
+        return result.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+            || $0.repositoryFullName.localizedCaseInsensitiveContains(query)
+            || ($0.authorLogin?.localizedCaseInsensitiveContains(query) ?? false)
+        }
+    }
+
+    private func filterRuns(_ runs: [RunItem]) -> [RunItem] {
+        guard !query.isEmpty else { return runs }
+        return runs.filter {
+            $0.workflowName.localizedCaseInsensitiveContains(query)
+            || $0.branch.localizedCaseInsensitiveContains(query)
+            || $0.repositoryFullName.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private func filterNotifs(_ items: [NotificationItem]) -> [NotificationItem] {
+        guard !query.isEmpty else { return items }
+        return items.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+            || $0.repositoryFullName.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    // MARK: - Sections (only non-empty ones are shown)
+
+    private struct SectionSpec: Identifiable { let id: String; let view: AnyView }
+
+    /// Builds each section but keeps only the ones that have at least one row after filtering.
+    private var visibleSections: [SectionSpec] {
+        let running = filterRuns(store.runningRuns)
+        let failures = filterRuns(store.recentFailures)
+        let concerning = filterPRs(store.concerningPRs)
+        let followed = filterPRs(store.followedOpenPRs)
+        let notifs = filterNotifs(store.mentions).sorted { ($0.isMention ? 0 : 1) < ($1.isMention ? 0 : 1) }
+
+        var specs: [SectionSpec] = []
+
+        if !running.isEmpty {
+            specs.append(.init(id: "running", view: AnyView(
+                CollapsibleSection(title: "Actions running", systemImage: "bolt.horizontal.circle",
+                                   count: running.count, accent: Theme.pending) {
+                    ForEach(running) { runRow($0, showDuration: false) }
+                })))
+        }
+        if !failures.isEmpty {
+            specs.append(.init(id: "failures", view: AnyView(
+                CollapsibleSection(title: "Recent failures", systemImage: "xmark.octagon",
+                                   count: failures.count, accent: Theme.failure) {
+                    ForEach(failures) { runRow($0, showDuration: true) }
+                })))
+        }
+        if !concerning.isEmpty {
+            specs.append(.init(id: "concerning", view: AnyView(
+                CollapsibleSection(title: "PRs for me", systemImage: "person.crop.circle.badge.checkmark",
+                                   count: concerning.count, accent: Theme.accent) {
+                    ForEach(concerning) { prRow($0, showAuthor: false) }
+                })))
+        }
+        if !followed.isEmpty {
+            specs.append(.init(id: "followed", view: AnyView(
+                CollapsibleSection(title: "Open PRs (followed)", systemImage: "arrow.triangle.pull",
+                                   count: followed.count, accent: Theme.accent) {
+                    ForEach(followed) { prRow($0, showAuthor: true) }
+                })))
+        }
+        if !notifs.isEmpty {
+            specs.append(.init(id: "notifs", view: AnyView(
+                CollapsibleSection(title: "Mentions & notifications", systemImage: "at.circle",
+                                   count: notifs.count, accent: Theme.failure) {
+                    ForEach(notifs) { notifRow($0) }
+                })))
+        }
+        return specs
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 26)).foregroundStyle(Theme.success)
+            Text(query.isEmpty && !hideBots ? "All clear ✨" : "Nothing matches your filter")
+                .font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textPrimary)
+            if store.followedRepos.isEmpty {
+                Text("Follow repos in Settings to track their PRs and Actions.")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20).padding(.vertical, 34)
+    }
+
+    // MARK: - Row builders
+
+    private func prRow(_ pr: PRItem, showAuthor: Bool) -> some View {
+        var badges: [RowBadge] = pr.roles.sorted { $0.rawValue < $1.rawValue }.map {
+            RowBadge(text: $0.shortLabel, color: roleColor($0))
+        }
+        if pr.isDraft { badges.append(RowBadge(text: "draft", color: Theme.neutral)) }
+        var meta = pr.repositoryFullName + " · " + relativeTime(pr.updatedAt)
+        if showAuthor, let author = pr.authorLogin { meta = "@\(author) · " + meta }
+        return ItemRow(symbol: pr.ci.symbol, symbolColor: pr.ci.color,
+                       title: "#\(pr.number) \(pr.title)", subtitle: meta, badges: badges, url: pr.url)
+    }
+
+    private func runRow(_ run: RunItem, showDuration: Bool) -> some View {
+        var meta = "\(run.branch) · \(run.conclusionLabel)"
+        if showDuration { meta += " · \(formatDuration(run.duration))" }
+        meta += " · \(relativeTime(showDuration ? run.updatedAt : run.startedAt))"
+        return ItemRow(symbol: run.symbol, symbolColor: run.color, title: run.workflowName, subtitle: meta,
+                       badges: run.repositoryFullName.isEmpty ? [] : [RowBadge(text: run.repositoryFullName, color: Theme.neutral)],
+                       url: run.url, onDismiss: { store.dismissRun(run) })
+    }
+
+    private func notifRow(_ item: NotificationItem) -> some View {
+        ItemRow(symbol: item.isMention ? "at" : "bell.fill",
+                symbolColor: item.isMention ? Theme.failure : Theme.textSecondary,
+                title: item.title,
+                subtitle: "\(item.repositoryFullName) · \(relativeTime(item.updatedAt))",
+                badges: [RowBadge(text: item.reason.replacingOccurrences(of: "_", with: " "),
+                                  color: item.isMention ? Theme.failure : Theme.neutral)],
+                url: item.url,
+                onDismiss: { Task { await store.markNotificationDone(item) } },
+                dismissHelp: "Mark as read on GitHub")
+    }
+
+    private func roleColor(_ role: PRRole) -> Color {
+        switch role {
+        case .reviewer: return Theme.accent
+        case .assignee: return Theme.pending
+        case .author: return Theme.success
         }
     }
 
@@ -130,11 +311,13 @@ struct PopoverView: View {
             }
             .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).help("Settings")
 
-            Button { updater.checkForUpdates() } label: {
-                Image(systemName: "arrow.down.circle").font(.system(size: 12))
+            if updater.isConfigured {
+                Button { updater.checkForUpdates() } label: {
+                    Image(systemName: "arrow.down.circle").font(.system(size: 12))
+                }
+                .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                .disabled(!updater.canCheckForUpdates).help("Check for updates")
             }
-            .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-            .disabled(!updater.canCheckForUpdates).help("Check for updates")
 
             Button { NSApplication.shared.terminate(nil) } label: {
                 Image(systemName: "power").font(.system(size: 12))
@@ -153,5 +336,14 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(Theme.failure.opacity(0.12))
+    }
+}
+
+/// Reports the popover's scrollable content height so the window can size to fit.
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 { value = next }
     }
 }

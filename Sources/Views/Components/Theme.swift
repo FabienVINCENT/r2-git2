@@ -28,6 +28,45 @@ func openInBrowser(_ url: URL) {
     NSWorkspace.shared.open(url)
 }
 
+/// Native translucent (vibrancy) background — the modern macOS "glass" menu look. Blurs whatever
+/// is behind the popover instead of painting an opaque panel.
+///
+/// `behindWindow` blending only shows through if the host window itself is non-opaque with a clear
+/// background, which the `MenuBarExtra` panel is not by default — so the view fixes that once it's
+/// attached to its window.
+struct VisualEffectBackground: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+    var blending: NSVisualEffectView.BlendingMode = .behindWindow
+    /// < 1 lets more of the background show through than the material alone.
+    var alpha: CGFloat = 0.85
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = WindowClearingEffectView()
+        view.material = material
+        view.blendingMode = blending
+        view.state = .active
+        view.alphaValue = alpha
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = material
+        view.blendingMode = blending
+        view.alphaValue = alpha
+    }
+}
+
+/// An `NSVisualEffectView` that makes its host window transparent so `behindWindow` vibrancy shows.
+private final class WindowClearingEffectView: NSVisualEffectView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+    }
+}
+
 extension CIStatus {
     var color: Color {
         switch self {

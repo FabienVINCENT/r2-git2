@@ -50,6 +50,14 @@ struct PRItem: Identifiable, Sendable, Hashable {
     var roles: Set<PRRole>
     var ci: CIStatus
 
+    /// Bot-authored PR (dependabot, renovate, …). Used to deprioritize/hide automated PRs.
+    var isBot: Bool {
+        guard let a = authorLogin?.lowercased() else { return false }
+        if a.hasSuffix("[bot]") { return true }
+        return ["dependabot", "renovate", "github-actions", "snyk-bot",
+                "codecov", "imgbot", "greenkeeper", "mergify"].contains(a)
+    }
+
     static func == (l: PRItem, r: PRItem) -> Bool { l.id == r.id }
     func hash(into h: inout Hasher) { h.combine(id) }
 }

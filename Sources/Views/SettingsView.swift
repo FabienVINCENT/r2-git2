@@ -79,7 +79,7 @@ private struct RepositoriesTab: View {
                 ForEach(filtered) { repo in
                     Toggle(isOn: Binding(
                         get: { store.settings.isFollowing(repo) },
-                        set: { _ in store.settings.toggleFollow(repo) }
+                        set: { _ in store.toggleFollow(repo) }
                     )) {
                         HStack(spacing: 6) {
                             Image(systemName: repo.isPrivate ? "lock.fill" : "book.closed")
@@ -130,12 +130,17 @@ private struct PreferencesTab: View {
             }
 
             Section("Updates") {
-                Toggle("Check for updates automatically", isOn: Binding(
-                    get: { updater.automaticallyChecksForUpdates },
-                    set: { updater.automaticallyChecksForUpdates = $0 }
-                ))
-                Button("Check for updates now") { updater.checkForUpdates() }
-                    .disabled(!updater.canCheckForUpdates)
+                if updater.isConfigured {
+                    Toggle("Check for updates automatically", isOn: Binding(
+                        get: { updater.automaticallyChecksForUpdates },
+                        set: { updater.automaticallyChecksForUpdates = $0 }
+                    ))
+                    Button("Check for updates now") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheckForUpdates)
+                } else {
+                    Text("Auto-updates activate once a signed release is published (Sparkle key not set yet — see README → Distribution).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Section("Rate limit (debug)") {

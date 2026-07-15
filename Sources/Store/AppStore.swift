@@ -14,7 +14,6 @@ final class AppStore {
     enum AuthPhase: Equatable {
         case checking
         case signedOut
-        case awaitingAuthorization
         case signedIn
     }
 
@@ -22,7 +21,6 @@ final class AppStore {
 
     private let keychain = KeychainStore()
     private let cache = ETagCache()
-    private let deviceFlow = DeviceFlowAuth()
     let settings: AppSettings
     private let notifications: NotificationManager
     private var client: GitHubClient
@@ -32,16 +30,13 @@ final class AppStore {
 
     private(set) var authPhase: AuthPhase = .checking
     private(set) var currentUser: GitHubUser?
-    private(set) var deviceCode: DeviceFlowAuth.DeviceCode?
-    private(set) var deviceFlowStatus: String?
-    private var loginTask: Task<Void, Never>?
 
     // MARK: - Data
 
     private(set) var concerningPRs: [PRItem] = []
     private(set) var followedOpenPRs: [PRItem] = []
     private(set) var runningRuns: [RunItem] = []
-    private(set) var recentRuns: [RunItem] = []
+    private(set) var recentFailures: [RunItem] = []
     private(set) var mentions: [NotificationItem] = []
     private(set) var discoveredRepos: [Repository] = []
 
@@ -54,6 +49,7 @@ final class AppStore {
     private(set) var rateLimit: RateLimitInfo = .unknown
 
     private var pollingTask: Task<Void, Never>?
+    private var followRefreshTask: Task<Void, Never>?
 
     // MARK: - Derived (badge)
 
@@ -61,7 +57,7 @@ final class AppStore {
     var reviewCount: Int { concerningPRs.filter { $0.roles.contains(.reviewer) }.count }
 
     /// Whether any followed repo had a run fail in the recent window — drives the red dot.
-    var hasRecentFailure: Bool { recentRuns.contains { $0.didFail } }
+    var hasRecentFailure: Bool { !recentFailures.isEmpty }
 
     var followedRepos: [Repository] {
         discoveredRepos.filter { settings.followedRepoIDs.contains($0.id) }
@@ -74,6 +70,58 @@ final class AppStore {
         self.settings = AppSettings()
         self.notifications = NotificationManager()
         self.client = GitHubClient(token: token, cache: cache)
+        loadDismissedRuns()
+    }
+
+    // MARK: - Dismissed runs
+
+    /// Runs the user has hidden ("handled"), keyed by run id → the `updatedAt` seen at dismissal.
+    /// If a run gets newer activity (e.g. it's re-run), it reappears. Persisted so it survives
+    /// relaunch.
+    private(set) var dismissedRuns: [Int: Date] = [:]
+    private let dismissedRunsKey = "dismissedRuns"
+
+    func dismissRun(_ run: RunItem) {
+        dismissedRuns[run.id] = run.updatedAt
+        pruneDismissedRuns()
+        saveDismissedRuns()
+        runningRuns.removeAll { $0.id == run.id }
+        recentFailures.removeAll { $0.id == run.id }
+    }
+
+    /// "Mark as done" a notification: marks it read on GitHub and drops it from the list.
+    func markNotificationDone(_ item: NotificationItem) async {
+        mentions.removeAll { $0.id == item.id }   // optimistic — feels instant
+        do {
+            try await client.markNotificationRead(id: item.id)
+        } catch {
+            if !handleAuthError(error) {
+                lastError = (error as? APIError)?.localizedDescription ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func isDismissed(_ run: RunItem) -> Bool {
+        if let seenAt = dismissedRuns[run.id] { return run.updatedAt <= seenAt }
+        return false
+    }
+
+    private func pruneDismissedRuns() {
+        // Runs older than the display window are never shown anyway — forget their dismissal.
+        let cutoff = Date().addingTimeInterval(-Config.recentFailureWindow * 4)
+        dismissedRuns = dismissedRuns.filter { $0.value >= cutoff }
+    }
+
+    private func loadDismissedRuns() {
+        guard let dict = UserDefaults.standard.dictionary(forKey: dismissedRunsKey) as? [String: Double] else { return }
+        dismissedRuns = Dictionary(uniqueKeysWithValues: dict.compactMap { key, value in
+            Int(key).map { ($0, Date(timeIntervalSince1970: value)) }
+        })
+    }
+
+    private func saveDismissedRuns() {
+        let dict = Dictionary(uniqueKeysWithValues: dismissedRuns.map { (String($0.key), $0.value.timeIntervalSince1970) })
+        UserDefaults.standard.set(dict, forKey: dismissedRunsKey)
     }
 
     // MARK: - Lifecycle
@@ -89,63 +137,35 @@ final class AppStore {
         }
     }
 
-    // MARK: - Device Flow sign-in
+    // MARK: - Personal Access Token sign-in
 
-    func startSignIn() {
-        guard Config.isClientIDConfigured else {
-            lastError = APIError.notConfigured.localizedDescription
-            return
-        }
-        loginTask?.cancel()
-        loginTask = Task { await runDeviceFlow() }
-    }
+    private(set) var isValidatingToken = false
 
-    func cancelSignIn() {
-        loginTask?.cancel()
-        loginTask = nil
-        deviceCode = nil
-        deviceFlowStatus = nil
-        authPhase = .signedOut
-    }
+    /// Validates a pasted Personal Access Token (`GET /user`) and, on success, stores it in the
+    /// Keychain and starts the session. Avoids the OAuth per-org grant screen entirely.
+    func signIn(withToken rawToken: String) async {
+        let token = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return }
 
-    private func runDeviceFlow() async {
+        isValidatingToken = true
+        defer { isValidatingToken = false }
+        lastError = nil
+
+        // Point the client at the candidate token, but don't persist until it's proven valid.
+        await client.setToken(token)
         do {
-            lastError = nil
-            let code = try await deviceFlow.requestCode()
-            deviceCode = code
-            deviceFlowStatus = DeviceFlowError.authorizationPending.errorDescription
-            authPhase = .awaitingAuthorization
-
-            var interval = UInt64(max(code.interval, 5))
-            let deadline = Date().addingTimeInterval(TimeInterval(code.expiresIn))
-
-            while !Task.isCancelled {
-                try await Task.sleep(nanoseconds: interval * 1_000_000_000)
-                if Date() > deadline { deviceFlowStatus = DeviceFlowError.expiredToken.errorDescription; break }
-                do {
-                    let token = try await deviceFlow.pollForToken(deviceCode: code.deviceCode)
-                    try keychain.save(token: token)
-                    await client.setToken(token)
-                    deviceCode = nil
-                    deviceFlowStatus = nil
-                    authPhase = .signedIn
-                    await afterSignIn()
-                    return
-                } catch APIError.deviceFlow(.authorizationPending) {
-                    continue
-                } catch APIError.deviceFlow(.slowDown) {
-                    interval += 5
-                } catch APIError.deviceFlow(.expiredToken) {
-                    deviceFlowStatus = DeviceFlowError.expiredToken.errorDescription
-                    break
-                } catch APIError.deviceFlow(.accessDenied) {
-                    deviceFlowStatus = DeviceFlowError.accessDenied.errorDescription
-                    break
-                }
-            }
+            currentUser = try await client.currentUser()
+            try keychain.save(token: token)
+            authPhase = .signedIn
+            await afterSignIn()
         } catch {
-            lastError = (error as? APIError)?.localizedDescription ?? error.localizedDescription
-            authPhase = .signedOut
+            // Revert to whatever token was there before (usually none).
+            await client.setToken(keychain.read())
+            if let apiError = error as? APIError, apiError.requiresReauth {
+                lastError = "Invalid token, or it lacks the required scopes (repo, read:org, notifications)."
+            } else {
+                lastError = (error as? APIError)?.localizedDescription ?? error.localizedDescription
+            }
         }
     }
 
@@ -165,13 +185,12 @@ final class AppStore {
 
     func signOut() {
         pollingTask?.cancel(); pollingTask = nil
-        loginTask?.cancel(); loginTask = nil
         try? keychain.delete()
         Task { await cache.clear(); await client.setToken(nil) }
         notifications.reset()
         currentUser = nil
         concerningPRs = []; followedOpenPRs = []
-        runningRuns = []; recentRuns = []
+        runningRuns = []; recentFailures = []
         mentions = []; discoveredRepos = []
         lastUpdated = nil; lastError = nil
         rateLimit = .unknown
@@ -192,70 +211,101 @@ final class AppStore {
         }
     }
 
+    /// Toggle following a repo and refresh shortly after — debounced so ticking several repos in
+    /// a row triggers a single refresh once the user settles.
+    func toggleFollow(_ repo: Repository) {
+        settings.toggleFollow(repo)
+        followRefreshTask?.cancel()
+        followRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.refresh()
+        }
+    }
+
     // MARK: - Refresh
 
     func refresh() async {
         guard authPhase == .signedIn, !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        lastError = nil
 
-        do {
-            // Fetch the independent pieces concurrently.
-            async let concerning = client.pullRequestsConcerningMe()
-            async let notifs = client.notifications()
-            let repos = followedRepos
+        // Each section fetches independently: a hiccup in one (or in a single followed repo)
+        // must never blank the others. Only a 401 is fatal — it signs the user out.
+        var problem: String?
+        func note(_ error: Error) -> Bool {
+            if handleAuthError(error) { return true }          // fatal → stop
+            problem = (error as? APIError)?.localizedDescription ?? error.localizedDescription
+            Self.log.error("Refresh error: \(problem ?? "", privacy: .public)")
+            return false
+        }
 
-            let concerningResult = try await concerning
-            let notifsResult = try await notifs
+        // "PRs for me" (any repo).
+        do { concerningPRs = Self.sortPRs(try await client.pullRequestsConcerningMe()) }
+        catch { if note(error) { return } }
 
-            // Per-repo PRs + runs (bounded fan-out over the user's followed set).
-            var openPRs: [PRItem] = []
-            var running: [RunItem] = []
-            var recent: [RunItem] = []
-            let cutoff = Date().addingTimeInterval(-Config.recentRunsWindow)
+        // Notifications / mentions.
+        do { mentions = try await client.notifications().map(Self.mapNotification).sorted { $0.updatedAt > $1.updatedAt } }
+        catch { if note(error) { return } }
 
-            try await withThrowingTaskGroup(of: RepoData.self) { group in
-                for repo in repos {
-                    group.addTask { [client] in
+        // Followed repos: PRs + Actions runs, resilient per repo.
+        let repos = followedRepos
+        let failureCutoff = Date().addingTimeInterval(-Config.recentFailureWindow)
+        var openPRs: [PRItem] = []
+        var running: [RunItem] = []
+        var failures: [RunItem] = []
+
+        await withTaskGroup(of: RepoData?.self) { group in
+            for repo in repos {
+                group.addTask { [client] in
+                    do {
                         async let prs = client.openPullRequests(owner: repo.ownerLogin, repo: repo.name)
                         async let runs = client.workflowRuns(owner: repo.ownerLogin, repo: repo.name)
                         let mappedRuns = try await runs.map { Self.mapRun($0, repoFullName: repo.fullName) }
                         return RepoData(prs: try await prs, runs: mappedRuns)
-                    }
-                }
-                for try await data in group {
-                    openPRs.append(contentsOf: data.prs)
-                    for item in data.runs {
-                        if item.isRunning { running.append(item) }
-                        else if item.startedAt >= cutoff { recent.append(item) }
+                    } catch {
+                        Self.log.error("Repo \(repo.fullName, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                        return nil
                     }
                 }
             }
-
-            concerningPRs = concerningResult
-            followedOpenPRs = openPRs.sorted { $0.updatedAt > $1.updatedAt }
-            runningRuns = running.sorted { $0.startedAt > $1.startedAt }
-            recentRuns = recent.sorted { $0.startedAt > $1.startedAt }
-            mentions = notifsResult.map(Self.mapNotification).sorted { $0.updatedAt > $1.updatedAt }
-            if let info = try? await client.fetchRateLimit() {
-                rateLimit = info
-            } else {
-                rateLimit = await client.rateLimit
-            }
-            lastUpdated = Date()
-
-            notifications.process(concerningPRs: concerningPRs,
-                                  mentions: mentions,
-                                  failedRuns: recentRuns.filter { $0.didFail })
-        } catch {
-            if !handleAuthError(error) {
-                lastError = (error as? APIError)?.localizedDescription ?? error.localizedDescription
+            for await data in group {
+                guard let data else { continue }
+                openPRs.append(contentsOf: data.prs)
+                for item in data.runs {
+                    if isDismissed(item) { continue }         // user marked it handled
+                    if item.isRunning { running.append(item) }
+                    // Only failures, and only recent ones (by finish time). Successes are hidden.
+                    else if item.didFail && item.updatedAt >= failureCutoff { failures.append(item) }
+                }
             }
         }
+
+        followedOpenPRs = Self.sortPRs(openPRs)
+        runningRuns = running.sorted { $0.startedAt > $1.startedAt }
+        recentFailures = failures.sorted { $0.updatedAt > $1.updatedAt }
+
+        if let info = try? await client.fetchRateLimit() { rateLimit = info }
+        else { rateLimit = await client.rateLimit }
+
+        lastUpdated = Date()
+        lastError = problem   // nil clears any previous error once things recover
+
+        notifications.process(concerningPRs: concerningPRs,
+                              mentions: mentions,
+                              failedRuns: recentFailures)
     }
 
-    private struct RepoData { let prs: [PRItem]; let runs: [RunItem] }
+    private struct RepoData: Sendable { let prs: [PRItem]; let runs: [RunItem] }
+
+    /// Humans first (most-recently updated on top), bot-authored PRs last — dependabot & friends
+    /// are rarely the priority.
+    nonisolated private static func sortPRs(_ prs: [PRItem]) -> [PRItem] {
+        prs.sorted { a, b in
+            if a.isBot != b.isBot { return !a.isBot }
+            return a.updatedAt > b.updatedAt
+        }
+    }
 
     // MARK: - Polling
 

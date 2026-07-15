@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// First-run / signed-out screen. Drives the OAuth Device Flow: shows the user code, offers to
-/// copy it and open github.com/login/device, and reflects polling status.
+/// Signed-out screen. Authentication is via a **Personal Access Token (classic)** the user
+/// pastes in — this avoids the OAuth per-organization grant screen while keeping full access.
 struct LoginView: View {
     @Bindable var store: AppStore
-    @State private var copied = false
+    @State private var tokenInput = ""
 
     var body: some View {
         VStack(spacing: 16) {
@@ -19,13 +19,7 @@ struct LoginView: View {
             }
             .padding(.top, 8)
 
-            if !Config.isClientIDConfigured {
-                notConfigured
-            } else if let code = store.deviceCode {
-                deviceFlow(code)
-            } else {
-                signInPrompt
-            }
+            tokenEntry
 
             if let error = store.lastError {
                 Text(error).font(.system(size: 10.5)).foregroundStyle(Theme.failure)
@@ -36,80 +30,46 @@ struct LoginView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - States
-
-    private var signInPrompt: some View {
+    private var tokenEntry: some View {
         VStack(spacing: 10) {
-            Text("Sign in with your GitHub account to get started.")
-                .font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary)
+            Text("Sign in with a classic personal access token (scopes: repo, read:org, notifications).")
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
-            Button { store.startSignIn() } label: {
-                Text("Sign in with GitHub")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 8)
+
+            Button {
+                openInBrowser(Config.tokenCreationURL)
+            } label: {
+                Label("Create a token on GitHub", systemImage: "arrow.up.right.square")
+                    .font(.system(size: 11.5, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 7)
             }
             .buttonStyle(.plain)
-            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 8))
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(Theme.textPrimary)
+            .help("Opens GitHub with the required scopes pre-selected")
+
+            SecureField("ghp_…", text: $tokenInput)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .onSubmit(submitToken)
+
+            Button(action: submitToken) {
+                HStack(spacing: 6) {
+                    if store.isValidatingToken { ProgressView().controlSize(.small).scaleEffect(0.7) }
+                    Text(store.isValidatingToken ? "Validating…" : "Save token")
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+            .background(Theme.accent.opacity(tokenInput.isEmpty ? 0.4 : 1), in: RoundedRectangle(cornerRadius: 8))
             .foregroundStyle(.white)
+            .disabled(tokenInput.isEmpty || store.isValidatingToken)
         }
     }
 
-    private func deviceFlow(_ code: DeviceFlowAuth.DeviceCode) -> some View {
-        VStack(spacing: 12) {
-            Text("Enter this code on GitHub:")
-                .font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary)
-
-            Text(code.userCode)
-                .font(.system(size: 26, weight: .bold, design: .monospaced))
-                .tracking(4)
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.vertical, 10).padding(.horizontal, 16)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
-
-            HStack(spacing: 8) {
-                Button {
-                    let pb = NSPasteboard.general
-                    pb.clearContents(); pb.setString(code.userCode, forType: .string)
-                    copied = true
-                } label: {
-                    Label(copied ? "Copied!" : "Copy code", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 11.5, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 7)
-                }
-                .buttonStyle(.plain)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
-                .foregroundStyle(Theme.textPrimary)
-
-                Button {
-                    openInBrowser(code.verificationURI)
-                } label: {
-                    Label("Open GitHub", systemImage: "arrow.up.right.square")
-                        .font(.system(size: 11.5, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 7)
-                }
-                .buttonStyle(.plain)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 8))
-                .foregroundStyle(.white)
-            }
-
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small).scaleEffect(0.7)
-                Text(store.deviceFlowStatus ?? "Waiting for authorization…")
-                    .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
-            }
-
-            Button("Cancel") { store.cancelSignIn() }
-                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
-        }
-    }
-
-    private var notConfigured: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "wrench.and.screwdriver").foregroundStyle(Theme.pending)
-            Text("Setup required")
-                .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-            Text("Set `GITHUB_CLIENT_ID` in Config.swift with your OAuth App's Client ID, then rebuild. See the README.")
-                .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(.vertical, 6)
+    private func submitToken() {
+        let token = tokenInput
+        guard !token.isEmpty, !store.isValidatingToken else { return }
+        Task { await store.signIn(withToken: token); tokenInput = "" }
     }
 }

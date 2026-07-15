@@ -2,22 +2,21 @@ import Foundation
 
 /// Global, compile-time configuration.
 ///
-/// Fill in `githubClientID` with the Client ID of the OAuth App you register on GitHub
-/// (Settings → Developer settings → OAuth Apps → New OAuth App).
-/// The Device Flow does **not** use a client secret, so nothing secret is embedded here.
+/// Authentication uses a **Personal Access Token (classic)** that the user generates and pastes
+/// in — this avoids the OAuth per-organization "grant" screen while keeping full API access
+/// (cross-repo PR search, notifications inbox, org repos). Nothing secret is embedded here.
 enum Config {
 
-    // MARK: - GitHub OAuth (Device Flow)
+    // MARK: - GitHub token
 
-    /// OAuth App Client ID. REQUIRED — the app shows an error on the login screen until set.
-    /// Register at https://github.com/settings/developers and enable "Device Flow".
-    static let githubClientID = "REPLACE_WITH_GITHUB_CLIENT_ID"
+    /// Scopes the pasted token must have: read PRs/Actions on private+public repos, list orgs,
+    /// read the notifications inbox.
+    static let requiredScopes = ["repo", "read:org", "notifications"]
 
-    /// Scopes requested during authorization.
-    /// - `repo`           read PRs / Actions on private + public repos
-    /// - `read:org`       enumerate organizations you belong to
-    /// - `notifications`  read the notifications inbox (mentions)
-    static let oauthScopes = ["repo", "read:org", "notifications"]
+    /// "New personal access token (classic)" page with our scopes pre-checked.
+    static var tokenCreationURL: URL {
+        URL(string: "https://github.com/settings/tokens/new?description=r2-git2&scopes=\(requiredScopes.joined(separator: ","))")!
+    }
 
     // MARK: - GitHub API base URLs (Enterprise-ready)
 
@@ -27,24 +26,16 @@ enum Config {
     /// GraphQL endpoint. For Enterprise: `https://HOST/api/graphql`.
     static let graphQLURL = URL(string: "https://api.github.com/graphql")!
 
-    /// Device Flow endpoints live on the web host, not the API host.
-    static let deviceCodeURL = URL(string: "https://github.com/login/device/code")!
-    static let deviceTokenURL = URL(string: "https://github.com/login/oauth/access_token")!
-
-    /// Where users type the code shown by the login screen.
-    static let deviceVerificationURL = URL(string: "https://github.com/login/device")!
-
     // MARK: - Behavior
 
     /// Available auto-refresh intervals (seconds). Default is 10 minutes, per spec.
     static let refreshIntervals: [TimeInterval] = [300, 600, 900, 1800]
     static let defaultRefreshInterval: TimeInterval = 600
 
-    /// How far back "recent" Actions runs go.
-    static let recentRunsWindow: TimeInterval = 24 * 60 * 60
+    /// How far back a *failed* Actions run is still surfaced (successful runs are never listed —
+    /// they're noise). Running/queued runs are always shown regardless of age.
+    static let recentFailureWindow: TimeInterval = 6 * 60 * 60
 
     /// A friendly User-Agent is required by the GitHub API.
     static let userAgent = "r2-git2/1.0 (macOS menu bar app)"
-
-    static var isClientIDConfigured: Bool { githubClientID != "REPLACE_WITH_GITHUB_CLIENT_ID" && !githubClientID.isEmpty }
 }

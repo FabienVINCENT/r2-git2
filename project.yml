@@ -46,7 +46,7 @@ targets:
         # --- Sparkle auto-update configuration ---
         SUFeedURL: "https://github.com/FabienVINCENT/r2-git2/releases/latest/download/appcast.xml"
         # Replace with the public EdDSA key printed by `generate_keys` (see README).
-        SUPublicEDKey: "REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY"
+        SUPublicEDKey: "arMgfST15sf9y4B9+2+sedCUxP3ZhcBvM/9jfthlj24="
         SUEnableInstallerLauncherService: true
         SUAutomaticallyUpdate: false
     settings:

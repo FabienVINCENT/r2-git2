@@ -18,9 +18,9 @@ Built with Swift + SwiftUI (`MenuBarExtra`, `.window` style), targeting **macOS 
   - **PRs for me** — where you are review-requested, assigned, or the author (any repo,
     deduplicated across roles), each tagged with its role and CI status.
   - **Open PRs** on your followed repos.
-- **GitHub Actions** per followed repo: in-progress/queued runs on all branches, plus runs
-  finished in the last 24 h — with workflow name, branch, colored status, duration, and relative
-  time.
+- **GitHub Actions** per followed repo: in-progress/queued runs on all branches, plus **recent
+  failures** (successful runs are hidden to cut noise; window is `Config.recentFailureWindow`,
+  default 6 h) — with workflow name, branch, colored status, duration, and relative time.
 - **Notifications & mentions** from your GitHub inbox, mentions highlighted.
 - **Auto-refresh** every 10 min (configurable) + a manual refresh button; "Updated X ago" header.
 - **Conditional requests** (`ETag` / `If-None-Match`): a `304 Not Modified` doesn't consume your
@@ -40,7 +40,7 @@ Built with Swift + SwiftUI (`MenuBarExtra`, `.window` style), targeting **macOS 
 Sources/
   App/          R2Git2App (@main MenuBarExtra), AppDelegate, Config, Info.plist, entitlements
   Models/       Codable GitHub DTOs (GitHubModels) + UI domain models (DomainModels)
-  Networking/   GitHubClient (REST/Search/GraphQL), GitHubEndpoint, ETagCache, DeviceFlowAuth, APIError
+  Networking/   GitHubClient (REST/Search/GraphQL), GitHubEndpoint, ETagCache, APIError
   Auth/         KeychainStore
   Store/        AppStore (@Observable orchestrator), AppSettings, NotificationManager
   Updater/      UpdaterViewModel (Sparkle)
@@ -63,20 +63,22 @@ project.yml     XcodeGen spec (the .xcodeproj is generated, not committed)
 
 ## Setup
 
-### 1. Register a GitHub OAuth App (Device Flow)
+### 1. Authentication — Personal Access Token (classic)
 
-1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**.
-2. Name it (e.g. `r2-git2`), set any homepage URL, and **enable "Device Flow"**.
-3. No client secret is needed (Device Flow doesn't use one).
-4. Copy the **Client ID**.
+The app authenticates with a **classic Personal Access Token** you generate yourself. This avoids
+the OAuth per-organization "grant" consent screen while keeping full API access (cross-repo PR
+search, the notifications inbox, and org repos). No Client ID or client secret is needed.
 
-Then open `Sources/App/Config.swift` and set:
+You generate the token from the app itself on first launch (see step 3), or ahead of time at
+**GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate
+new token (classic)** with scopes:
 
-```swift
-static let githubClientID = "Iv1.xxxxxxxxxxxxxxxx"   // your Client ID
-```
+- `repo` — PRs & Actions on private + public repos
+- `read:org` — list your organizations
+- `notifications` — read the notifications inbox (mentions)
 
-Scopes requested: `repo`, `read:org`, `notifications`.
+> If an organization enforces **SAML SSO**, click **Configure SSO → Authorize** next to the token
+> once so it can read that org's private resources.
 
 ### 2. Build locally
 
@@ -95,9 +97,17 @@ xcodebuild -project r2-git2.xcodeproj -scheme r2-git2 -destination 'platform=mac
 xcodebuild -project r2-git2.xcodeproj -scheme r2-git2 -destination 'platform=macOS' test
 ```
 
-On first launch, the popover shows a **user code**; click **Copy code** and **Open GitHub**, paste
-it at <https://github.com/login/device>, and authorize. The token is saved to your Keychain.
-Use **Settings → Account → Sign out** to purge it.
+### 3. Sign in
+
+On first launch the popover shows a sign-in screen:
+
+1. Click **Create a token on GitHub** — this opens GitHub's "new classic token" page with the
+   three required scopes **pre-selected**. Choose an expiry (or *No expiration*), generate, and
+   copy the token (`ghp_…`).
+2. Paste it into the app and click **Save token**. It's validated (`GET /user`) and stored in the
+   macOS **Keychain** — never on disk or in `UserDefaults`.
+
+Use **Settings → Account → Sign out** to purge the token from the Keychain.
 
 ---
 
