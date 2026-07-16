@@ -6,6 +6,8 @@ also shown in-app by Sparkle when an update is offered. Format loosely follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-16
+
 ### Added
 - PR staleness indicator: PRs open for 3+ days show a "waiting Xd" badge, turning red once a
   week old (drafts excluded).
