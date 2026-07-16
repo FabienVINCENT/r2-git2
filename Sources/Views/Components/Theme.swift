@@ -66,12 +66,31 @@ private struct VisualEffectRepresentable: NSViewRepresentable {
 
 /// An `NSVisualEffectView` that makes its host window transparent so `behindWindow` vibrancy shows.
 private final class WindowClearingEffectView: NSVisualEffectView {
+    private var resizeObserver: NSObjectProtocol?
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if let resizeObserver {
+            NotificationCenter.default.removeObserver(resizeObserver)
+            self.resizeObserver = nil
+        }
         guard let window else { return }
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = true
+        // AppKit caches a transparent window's shadow (and its edge highlight) for the silhouette
+        // it drew last. The popover resizes after opening (content height is measured late), and a
+        // shrink leaves the stale shadow visible as ghost lines above/below the panel — so recompute
+        // it after every resize, once the new frame has been repainted.
+        resizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: window, queue: .main
+        ) { [weak window] _ in
+            DispatchQueue.main.async { window?.invalidateShadow() }
+        }
+    }
+
+    deinit {
+        if let resizeObserver { NotificationCenter.default.removeObserver(resizeObserver) }
     }
 }
 
