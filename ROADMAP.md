@@ -7,9 +7,10 @@ native notifications, menu-bar badge, launch-at-login, ETag conditional requests
 auto-updates + CI/CD release pipeline, app icon.
 
 ## v1.1 — Quick wins 🟢
-- [ ] Release notes in the appcast (`<description>`) + `CHANGELOG.md` → "What's new" on update
-- [ ] Group followed PRs by repository (per-repo subsections)
-- [ ] PR staleness indicator ("waiting X days") + sort options (CI / age)
+- [x] Release notes in the appcast (`<description>`) + `CHANGELOG.md` → "What's new" on update *(1.1.0)*
+- [x] Group followed PRs by repository (per-repo subsections) *(1.1.0)*
+- [x] PR staleness indicator ("waiting X days") + sort options (CI / age)
+- [x] Notify when one of my PRs receives a review (approved / changes requested / comment)
 - [ ] Hide drafts + per-repo notification mute
 - [ ] Keyboard shortcuts (open, ⌘F filter, Esc to clear)
 

@@ -292,18 +292,16 @@ final class AppStore {
 
         notifications.process(concerningPRs: concerningPRs,
                               mentions: mentions,
-                              failedRuns: recentFailures)
+                              failedRuns: recentFailures,
+                              currentUserLogin: currentUser?.login)
     }
 
     private struct RepoData: Sendable { let prs: [PRItem]; let runs: [RunItem] }
 
-    /// Humans first (most-recently updated on top), bot-authored PRs last — dependabot & friends
-    /// are rarely the priority.
+    /// Baseline order kept in the store (humans first, recent activity on top). The popover
+    /// re-sorts per the user's `prSortOrder` preference at display time.
     nonisolated private static func sortPRs(_ prs: [PRItem]) -> [PRItem] {
-        prs.sorted { a, b in
-            if a.isBot != b.isBot { return !a.isBot }
-            return a.updatedAt > b.updatedAt
-        }
+        prs.sortedForDisplay(by: .activity)
     }
 
     // MARK: - Polling

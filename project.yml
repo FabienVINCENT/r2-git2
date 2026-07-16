@@ -65,6 +65,7 @@ targets:
     sources:
       - path: Tests
       - path: Sources/Networking/ETagCache.swift
+      - path: Sources/Networking/GraphQL.swift
       - path: Sources/Models/GitHubModels.swift
       - path: Sources/Models/DomainModels.swift
     settings:

@@ -6,6 +6,16 @@ also shown in-app by Sparkle when an update is offered. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- PR staleness indicator: PRs open for 3+ days show a "waiting Xd" badge, turning red once a
+  week old (drafts excluded).
+- Sort options for the PR lists — recent activity (default), CI status (failing first), or
+  oldest first — via a new sort button in the filter bar. Bot PRs always stay at the bottom.
+- Native notification when one of your PRs receives a review: approved ✅, changes requested 🔁,
+  or a review comment 💬 — so you know the review you've been waiting for has landed. A
+  re-review notifies again; your own comments on your PR don't.
+- PR rows now show the overall review decision as a badge ("approved" / "changes requested").
+
 ## [1.1.1] - 2026-07-16
 
 ### Fixed

@@ -14,6 +14,7 @@ final class AppSettings {
     private enum Key {
         static let followedRepoIDs = "followedRepoIDs"
         static let refreshInterval = "refreshInterval"
+        static let prSortOrder = "prSortOrder"
     }
 
     /// IDs of repositories the user chose to follow. **Empty by default** — nothing is tracked
@@ -25,6 +26,11 @@ final class AppSettings {
     /// Auto-refresh cadence in seconds (default: 10 minutes).
     var refreshInterval: TimeInterval {
         didSet { defaults.set(refreshInterval, forKey: Key.refreshInterval) }
+    }
+
+    /// How the PR lists in the popover are ordered.
+    var prSortOrder: PRSortOrder {
+        didSet { defaults.set(prSortOrder.rawValue, forKey: Key.prSortOrder) }
     }
 
     /// Whether the app launches at login. Backed by `SMAppService.mainApp`, mirrored for the UI.
@@ -41,6 +47,7 @@ final class AppSettings {
         self.followedRepoIDs = Set(ids)
         let interval = defaults.double(forKey: Key.refreshInterval)
         self.refreshInterval = interval > 0 ? interval : Config.defaultRefreshInterval
+        self.prSortOrder = PRSortOrder(rawValue: defaults.string(forKey: Key.prSortOrder) ?? "") ?? .activity
         self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
     }
 

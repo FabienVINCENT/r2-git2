@@ -11,17 +11,21 @@ enum GraphQL {
 
     // MARK: - Shared PR node
 
-    /// Selection shared by both queries. `commits(last:1)` carries the CI roll-up.
+    /// Selection shared by both queries. `commits(last:1)` carries the CI roll-up;
+    /// `latestReviews` is the newest submitted review per reviewer (feeds review notifications).
     static let prFields = """
       databaseId
       number
       title
       url
       isDraft
+      createdAt
       updatedAt
+      reviewDecision
       repository { nameWithOwner }
       author { login }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+      latestReviews(first: 10) { nodes { state submittedAt author { login } } }
     """
 
     struct PRNode: Decodable {
@@ -30,10 +34,13 @@ enum GraphQL {
         let title: String
         let url: URL
         let isDraft: Bool
+        let createdAt: Date
         let updatedAt: Date
+        let reviewDecision: String?
         let repository: Repo
         let author: Author?
         let commits: Commits
+        let latestReviews: Reviews?
 
         struct Repo: Decodable { let nameWithOwner: String }
         struct Author: Decodable { let login: String }
@@ -41,11 +48,20 @@ enum GraphQL {
         struct CommitNode: Decodable { let commit: Commit }
         struct Commit: Decodable { let statusCheckRollup: Rollup? }
         struct Rollup: Decodable { let state: String }
+        struct Reviews: Decodable { let nodes: [ReviewNode] }
+        struct ReviewNode: Decodable { let state: String; let submittedAt: Date?; let author: Author? }
 
         /// Converts to the UI model. `role` is the initial role (nil for followed-repo PRs).
         func toPRItem(role: PRRole?) -> PRItem? {
             guard let id = databaseId else { return nil }
             let rollupState = commits.nodes.first?.commit.statusCheckRollup?.state
+            // Keep only submitted, opinion-bearing reviews (PENDING/DISMISSED are noise here).
+            let reviews: [PRReview] = (latestReviews?.nodes ?? []).compactMap { node in
+                guard let state = PRReviewState(rawValue: node.state),
+                      let submittedAt = node.submittedAt,
+                      let login = node.author?.login else { return nil }
+                return PRReview(authorLogin: login, state: state, submittedAt: submittedAt)
+            }
             return PRItem(
                 id: id,
                 number: number,
@@ -54,9 +70,12 @@ enum GraphQL {
                 url: url,
                 authorLogin: author?.login,
                 isDraft: isDraft,
+                createdAt: createdAt,
                 updatedAt: updatedAt,
                 roles: role.map { [$0] } ?? [],
-                ci: .from(rollupState: rollupState)
+                ci: .from(rollupState: rollupState),
+                reviewDecision: .from(reviewDecision),
+                latestReviews: reviews.sorted { $0.submittedAt > $1.submittedAt }
             )
         }
     }

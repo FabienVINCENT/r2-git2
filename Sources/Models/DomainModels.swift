@@ -13,6 +13,53 @@ enum CIStatus: String, Sendable, Codable {
         default: return .none
         }
     }
+
+    /// Rank used by the "CI status" sort: what needs attention floats up, green sinks.
+    var attentionRank: Int {
+        switch self {
+        case .failing: return 0
+        case .pending: return 1
+        case .none: return 2
+        case .passing: return 3
+        }
+    }
+}
+
+/// GitHub's overall `reviewDecision` roll-up for a PR.
+enum ReviewDecision: String, Sendable, Codable {
+    case approved, changesRequested, reviewRequired, none
+
+    static func from(_ raw: String?) -> ReviewDecision {
+        switch raw?.uppercased() {
+        case "APPROVED": return .approved
+        case "CHANGES_REQUESTED": return .changesRequested
+        case "REVIEW_REQUIRED": return .reviewRequired
+        default: return .none
+        }
+    }
+}
+
+/// State of a submitted review. Only opinion-bearing states are kept — PENDING and DISMISSED
+/// reviews are dropped at mapping time.
+enum PRReviewState: String, Sendable, Codable {
+    case approved = "APPROVED"
+    case changesRequested = "CHANGES_REQUESTED"
+    case commented = "COMMENTED"
+
+    var notificationHeadline: String {
+        switch self {
+        case .approved: return "✅ PR approved"
+        case .changesRequested: return "🔁 Changes requested"
+        case .commented: return "💬 New review comment"
+        }
+    }
+}
+
+/// The latest submitted review from one reviewer (GraphQL `latestReviews`).
+struct PRReview: Sendable, Hashable, Codable {
+    let authorLogin: String
+    let state: PRReviewState
+    let submittedAt: Date
 }
 
 /// Why a PR concerns the current user. A PR may have several roles at once.
@@ -46,9 +93,15 @@ struct PRItem: Identifiable, Sendable, Hashable {
     let url: URL
     let authorLogin: String?
     let isDraft: Bool
+    let createdAt: Date
     let updatedAt: Date
     var roles: Set<PRRole>
     var ci: CIStatus
+    var reviewDecision: ReviewDecision = .none
+    var latestReviews: [PRReview] = []
+
+    /// Whole days since the PR was opened — the "waiting X days" staleness signal.
+    var waitingDays: Int { max(0, Int(Date().timeIntervalSince(createdAt) / 86_400)) }
 
     /// Bot-authored PR (dependabot, renovate, …). Used to deprioritize/hide automated PRs.
     var isBot: Bool {
@@ -60,6 +113,40 @@ struct PRItem: Identifiable, Sendable, Hashable {
 
     static func == (l: PRItem, r: PRItem) -> Bool { l.id == r.id }
     func hash(into h: inout Hasher) { h.combine(id) }
+}
+
+/// User-selectable ordering for the PR lists.
+enum PRSortOrder: String, Sendable, Codable, CaseIterable {
+    case activity   // most recently updated first (default)
+    case ci         // failing → pending → no status → passing
+    case age        // oldest (stalest) first
+
+    var label: String {
+        switch self {
+        case .activity: return "Recent activity"
+        case .ci: return "CI status"
+        case .age: return "Oldest first"
+        }
+    }
+}
+
+extension Array where Element == PRItem {
+    /// Applies the chosen order. Bot PRs always sink to the bottom, whatever the order.
+    func sortedForDisplay(by order: PRSortOrder) -> [PRItem] {
+        sorted { a, b in
+            if a.isBot != b.isBot { return !a.isBot }
+            switch order {
+            case .activity:
+                return a.updatedAt > b.updatedAt
+            case .ci:
+                if a.ci.attentionRank != b.ci.attentionRank { return a.ci.attentionRank < b.ci.attentionRank }
+                return a.updatedAt > b.updatedAt
+            case .age:
+                if a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
+                return a.updatedAt > b.updatedAt
+            }
+        }
+    }
 }
 
 /// A GitHub Actions run as shown in the popover.

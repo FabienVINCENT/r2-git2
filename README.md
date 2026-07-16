@@ -16,8 +16,11 @@ Built with Swift + SwiftUI (`MenuBarExtra`, `.window` style), targeting **macOS 
   which to *follow* in Settings — **nothing is followed by default**.
 - **Pull Requests**, in two groups:
   - **PRs for me** — where you are review-requested, assigned, or the author (any repo,
-    deduplicated across roles), each tagged with its role and CI status.
-  - **Open PRs** on your followed repos.
+    deduplicated across roles), each tagged with its role, CI status, and review decision
+    (approved / changes requested).
+  - **Open PRs** on your followed repos, grouped by repository.
+  - A **staleness badge** ("waiting Xd") flags PRs open for 3+ days (red at 7+), and a sort
+    button orders the lists by recent activity, CI status (failing first), or oldest first.
 - **GitHub Actions** per followed repo: in-progress/queued runs on all branches, plus **recent
   failures** (successful runs are hidden to cut noise; window is `Config.recentFailureWindow`,
   default 6 h) — with workflow name, branch, colored status, duration, and relative time.
@@ -25,7 +28,8 @@ Built with Swift + SwiftUI (`MenuBarExtra`, `.window` style), targeting **macOS 
 - **Auto-refresh** every 10 min (configurable) + a manual refresh button; "Updated X ago" header.
 - **Conditional requests** (`ETag` / `If-None-Match`): a `304 Not Modified` doesn't consume your
   rate limit. Remaining quota is shown in Settings → Preferences (debug).
-- **Native notifications** for: a new PR requesting your review / assigned to you, a new mention,
+- **Native notifications** for: a new PR requesting your review / assigned to you, a review
+  landing on one of your PRs (approved ✅ / changes requested 🔁 / comment 💬), a new mention,
   or a failed run on a followed repo — deduplicated so you're not re-notified on the next refresh.
 - **Menu-bar badge**: count of PRs to review, and an alert glyph when a run recently failed.
 - **Open at login** toggle (`SMAppService`).

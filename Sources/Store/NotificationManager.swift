@@ -2,9 +2,10 @@ import Foundation
 import UserNotifications
 import os
 
-/// Fires native macOS notifications for: new PRs requesting my review / assigned to me, new
-/// mentions, and newly-failed Actions runs on followed repos. Deduplicated via a persisted set
-/// of "seen" keys so a subsequent refresh never re-notifies the same item.
+/// Fires native macOS notifications for: new PRs requesting my review / assigned to me, reviews
+/// landing on my own PRs, new mentions, and newly-failed Actions runs on followed repos.
+/// Deduplicated via a persisted set of "seen" keys so a subsequent refresh never re-notifies the
+/// same item.
 @MainActor
 final class NotificationManager {
 
@@ -35,7 +36,8 @@ final class NotificationManager {
 
     /// Inspect the latest data and notify about anything new. Opening a notification launches
     /// the associated GitHub URL (handled in `AppDelegate`).
-    func process(concerningPRs: [PRItem], mentions: [NotificationItem], failedRuns: [RunItem]) {
+    func process(concerningPRs: [PRItem], mentions: [NotificationItem], failedRuns: [RunItem],
+                 currentUserLogin: String? = nil) {
         var pending: [(id: String, title: String, body: String, url: URL)] = []
 
         for pr in concerningPRs where pr.roles.contains(.reviewer) || pr.roles.contains(.assignee) {
@@ -43,6 +45,21 @@ final class NotificationManager {
             guard !seen.contains(key) else { continue }
             let role = pr.roles.contains(.reviewer) ? "Review requested" : "Assigned to you"
             pending.append((key, "\(role) · \(pr.repositoryFullName)", "#\(pr.number) \(pr.title)", pr.url))
+        }
+
+        // Reviews landing on my own PRs — the review I asked for finally arrived. The key embeds
+        // reviewer + state + timestamp, so a re-review (new submission) notifies again.
+        let me = currentUserLogin?.lowercased()
+        let reviewCutoff = Date().addingTimeInterval(-Config.reviewNotificationWindow)
+        for pr in concerningPRs where pr.roles.contains(.author) {
+            for review in pr.latestReviews {
+                guard review.authorLogin.lowercased() != me else { continue }   // my own follow-ups
+                guard review.submittedAt >= reviewCutoff else { continue }      // stale news
+                let key = "review:\(pr.id):\(review.authorLogin):\(review.state.rawValue):\(Int(review.submittedAt.timeIntervalSince1970))"
+                guard !seen.contains(key) else { continue }
+                pending.append((key, "\(review.state.notificationHeadline) · \(pr.repositoryFullName)",
+                                "#\(pr.number) \(pr.title) — @\(review.authorLogin)", pr.url))
+            }
         }
 
         for m in mentions where m.isMention {

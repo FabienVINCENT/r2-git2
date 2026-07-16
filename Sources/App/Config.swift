@@ -36,6 +36,16 @@ enum Config {
     /// they're noise). Running/queued runs are always shown regardless of age.
     static let recentFailureWindow: TimeInterval = 6 * 60 * 60
 
+    /// A PR shows a "waiting Xd" staleness badge once it's been open this many days; the badge
+    /// turns red at the second threshold.
+    static let staleAfterDays = 3
+    static let veryStaleAfterDays = 7
+
+    /// Only reviews submitted within this window can fire a native notification. Older ones are
+    /// stale news — and this also prevents a burst of notifications for historical reviews the
+    /// first time an existing install refreshes after updating to this feature.
+    static let reviewNotificationWindow: TimeInterval = 48 * 60 * 60
+
     /// A friendly User-Agent is required by the GitHub API.
     static let userAgent = "r2-git2/1.0 (macOS menu bar app)"
 }

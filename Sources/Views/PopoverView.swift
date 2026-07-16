@@ -97,6 +97,8 @@ struct PopoverView: View {
                 .buttonStyle(.plain)
             }
 
+            sortMenu
+
             Button { hideBots.toggle() } label: {
                 Image(systemName: hideBots ? "person.fill.xmark" : "person.2")
                     .font(.system(size: 11, weight: .medium))
@@ -107,6 +109,30 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
+    }
+
+    /// Sort selector for the PR lists. Tinted when a non-default order is active.
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort PRs by", selection: Binding(
+                get: { store.settings.prSortOrder },
+                set: { store.settings.prSortOrder = $0 }
+            )) {
+                ForEach(PRSortOrder.allCases, id: \.self) { order in
+                    Text(order.label).tag(order)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(store.settings.prSortOrder == .activity ? Theme.textTertiary : Theme.accent)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Sort PRs: \(store.settings.prSortOrder.label)")
     }
 
     private var query: String { filterText.trimmingCharacters(in: .whitespaces) }
@@ -164,10 +190,11 @@ struct PopoverView: View {
 
     /// Builds each section but keeps only the ones that have at least one row after filtering.
     private var visibleSections: [SectionSpec] {
+        let order = store.settings.prSortOrder
         let running = filterRuns(store.runningRuns)
         let failures = filterRuns(store.recentFailures)
-        let concerning = filterPRs(store.concerningPRs)
-        let followed = filterPRs(store.followedOpenPRs)
+        let concerning = filterPRs(store.concerningPRs).sortedForDisplay(by: order)
+        let followed = filterPRs(store.followedOpenPRs).sortedForDisplay(by: order)
         let notifs = filterNotifs(store.mentions).sorted { ($0.isMention ? 0 : 1) < ($1.isMention ? 0 : 1) }
 
         var specs: [SectionSpec] = []
@@ -238,7 +265,16 @@ struct PopoverView: View {
         var badges: [RowBadge] = pr.roles.sorted { $0.rawValue < $1.rawValue }.map {
             RowBadge(text: $0.shortLabel, color: roleColor($0))
         }
+        switch pr.reviewDecision {
+        case .approved: badges.append(RowBadge(text: "approved", color: Theme.success))
+        case .changesRequested: badges.append(RowBadge(text: "changes requested", color: Theme.failure))
+        case .reviewRequired, .none: break
+        }
         if pr.isDraft { badges.append(RowBadge(text: "draft", color: Theme.neutral)) }
+        if !pr.isDraft, pr.waitingDays >= Config.staleAfterDays {
+            badges.append(RowBadge(text: "waiting \(pr.waitingDays)d",
+                                   color: pr.waitingDays >= Config.veryStaleAfterDays ? Theme.failure : Theme.pending))
+        }
         var parts: [String] = []
         if showAuthor, let author = pr.authorLogin { parts.append("@\(author)") }
         if showRepo { parts.append(pr.repositoryFullName) }
