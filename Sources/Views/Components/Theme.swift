@@ -28,31 +28,39 @@ func openInBrowser(_ url: URL) {
     NSWorkspace.shared.open(url)
 }
 
-/// Native translucent (vibrancy) background — the modern macOS "glass" menu look. Blurs whatever
-/// is behind the popover instead of painting an opaque panel.
-///
+/// Native translucent (vibrancy) background — the modern macOS "glass" menu look, blurring what's
+/// behind the popover — topped with a dark scrim so the panel stays dark and readable even over
+/// bright/white windows (the material alone lets too much light through).
+struct VisualEffectBackground: View {
+    var material: NSVisualEffectView.Material = .hudWindow
+    var blending: NSVisualEffectView.BlendingMode = .behindWindow
+    /// Opacity of the dark layer over the blur. Higher = more opaque panel, fainter glass effect.
+    var scrimOpacity: Double = 0.75
+
+    var body: some View {
+        VisualEffectRepresentable(material: material, blending: blending)
+            .overlay(Theme.background.opacity(scrimOpacity))
+    }
+}
+
 /// `behindWindow` blending only shows through if the host window itself is non-opaque with a clear
 /// background, which the `MenuBarExtra` panel is not by default — so the view fixes that once it's
 /// attached to its window.
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .hudWindow
-    var blending: NSVisualEffectView.BlendingMode = .behindWindow
-    /// < 1 lets more of the background show through than the material alone.
-    var alpha: CGFloat = 0.85
+private struct VisualEffectRepresentable: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blending: NSVisualEffectView.BlendingMode
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = WindowClearingEffectView()
         view.material = material
         view.blendingMode = blending
         view.state = .active
-        view.alphaValue = alpha
         return view
     }
 
     func updateNSView(_ view: NSVisualEffectView, context: Context) {
         view.material = material
         view.blendingMode = blending
-        view.alphaValue = alpha
     }
 }
 
