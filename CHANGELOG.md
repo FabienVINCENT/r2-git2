@@ -6,6 +6,10 @@ also shown in-app by Sparkle when an update is offered. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Popover is now much less transparent: the translucent background gets a dark scrim so the
+  content stays readable even over bright/white windows, instead of being washed out.
+
 ## [1.2.0] - 2026-07-16
 
 ### Added
