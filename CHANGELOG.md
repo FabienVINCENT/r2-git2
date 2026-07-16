@@ -6,12 +6,18 @@ also shown in-app by Sparkle when an update is offered. Format loosely follows
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-07-16
+
 ### Fixed
-- Popover is now much less transparent: the translucent background gets a dark scrim so the
-  content stays readable even over bright/white windows, instead of being washed out.
 - No more ghost lines above/below the popover when its content is small: the transparent
   panel's cached window shadow is now recomputed after every resize, so shrinking to the
   measured content height no longer leaves the old frame's shadow behind.
+
+## [1.3.0] - 2026-07-16
+
+### Fixed
+- Popover is now much less transparent: the translucent background gets a dark scrim so the
+  content stays readable even over bright/white windows, instead of being washed out.
 
 ## [1.2.0] - 2026-07-16
 
